@@ -1,4 +1,4 @@
-
+#! /usr/bin/env Rscript
 
 suppressPackageStartupMessages(library(optparse))
 
@@ -12,9 +12,17 @@ option_list <- list (
         default="/home/tommerschwarz/data/ERP000546_attributes.txt",
         help="The attributes file for info on each run [default %default]"),
 
+    make_option (c("-t","--type"),
+        help="A string matching a sample type in the 'type' column of the attributes file [default %default]"),
+    
+    make_option (c("-ols","--outliers"),
+                 default=FALSE,
+                 action="store_true",
+                 help="Use flag to include outliers. [default %default]"),
+    
     make_option (c("-o","--outdir"),
-        default="/home/jmcgirr/output/",
-        help="The attributes file for info on each run [default %default]")
+                 default="/home/jmcgirr/output/",
+                 help="The attributes file for info on each run [default %default]")
     )
 
 
@@ -22,7 +30,8 @@ opt  <- parse_args(
     OptionParser(#usage= "usage: %prog [options]",
         option_list=option_list)
         )
-
+print(opt$outliers)
+print(opt$type)
 suppressPackageStartupMessages(library(DESeq2))
 
 ############################################
@@ -46,41 +55,83 @@ show.warnings=TRUE
 
 setwd(out_path)
 
-# Set project names
-proj1 <- "ERP003613"
-proj2 <- "ERP000546"
-
 # local
-#counts_path <- "C:/Users/jmcgirr/Documents/GitHub/RNA-Seq-in-the-Cloud/Expression/deseq2/data/ERP000546_genecounts.txt"
-#atts_path <- "C:/Users/jmcgirr/Documents/GitHub/RNA-Seq-in-the-Cloud/Expression/deseq2/data/ERP000546_attributes.txt"
-
-# Set column in attribute(s) file to include in DESeq objects
-design <- "type"
+#counts_path <- "C:/Users/jmcgirr/Desktop/joint_genecounts.txt"
+#atts_path <- "C:/Users/jmcgirr/Desktop/joint_metadata.txt"
 
 # What groups do we want to compare?
 # Which column in the attributes should be compared?
-att_cols <- c("organism_part")
-group1s <- c("appendix")
-group2s <- c("colon")
+att_cols <- c("condition")
+group1s <- c("control")
+group2s <- c("case")
 
 #####
 ############################################
-###### Create DESeq2 object and run ########
+### Create DESeq2 object and run contrast ##
 ############################################
 
+atts <- read.table(atts_path, header = TRUE, stringsAsFactors = FALSE, sep = "\t")
+atts <- atts[which(atts$type == opt$type & atts$is_outlier == "False"),]
+
+# subset data for speed
+# atts_cas <- atts[which(atts$condition == "case"),]
+# atts_con <- atts[which(atts$condition == "control"),]
+# 
+# atts <- rbind(atts_cas[sample(nrow(atts_cas), 9), ],
+#               atts_con[sample(nrow(atts_con), 9), ])
+# atts <- atts[order(atts$Run),]
+# 
+#
+atts_cas <- atts[which(atts$condition  == "case"),]
+atts_con <- atts[which(atts$condition  == "control"),]
 counts <- read.table(counts_path, header = TRUE, stringsAsFactors = FALSE, sep = "\t")
 rownames(counts) <- counts[,1]
 counts <- counts[,-1]
-atts <- read.table(atts_path, header = TRUE, stringsAsFactors = FALSE, sep = "\t")
-atts <-as.matrix(read.table(atts_path ,header = TRUE,row.names=1))
+keeps <- names(counts)[(names(counts) %in% atts$Run)]
+counts <- counts[, keeps]
+counts <- counts[ , order(names(counts))]
+rownames(atts) <- atts$Run
+atts$Run <- NULL
+atts <- as.matrix(atts)
+
+if (opt$outliers)
+{
+  atts <- read.table(atts_path, header = TRUE, stringsAsFactors = FALSE, sep = "\t")
+  counts <- read.table(counts_path, header = TRUE, stringsAsFactors = FALSE, sep = "\t")
+  atts <- atts[which(atts$type == opt$type),]
+  atts <- atts[order(atts$Run),]
+  atts_cas <- atts[which(atts$condition  == "case"),]
+  atts_con <- atts[which(atts$condition  == "control"),]
+  rownames(counts) <- counts[,1]
+  counts <- counts[,-1]
+  keeps <- names(counts)[(names(counts) %in% atts$Run)]
+  counts <- counts[, keeps]
+  counts <- counts[ , order(names(counts))]
+  rownames(atts) <- atts$Run
+  atts$Run <- NULL
+  atts <- as.matrix(atts)
+}
 
 ncol(counts)
 nrow(atts)
 
+
 # create DESeq Object
-dds <- DESeqDataSetFromMatrix(countData = counts,
-                              colData = atts,
-                              design= ~organism_part)
+if (length(unique(atts_cas$project))> 1 & length(unique(atts_con$project)) >1)
+{
+  dds <- DESeqDataSetFromMatrix(countData = counts,
+                                colData = atts,
+                                design= ~condition+project)
+
+                                
+}else                            
+{                            
+
+  dds <- DESeqDataSetFromMatrix(countData = counts,
+                                colData = atts,
+                                design= ~condition)
+}
+dds$condition <- factor(dds$condition, levels = c("control","case"))
 
 dds <- estimateSizeFactors(dds)
 idx <- rowSums(counts(dds, normalized=TRUE) >= 2 ) >= 2
@@ -108,6 +159,8 @@ norm_cts$geneID <- rownames(norm_cts)
 final_results <- merge(res_ordered,norm_cts, by = c("geneID"))
 
 write.table(final_results,paste(group1s[i],"_vs_",group2s[i],"_results.txt",sep=""), sep = "\t", quote = FALSE, row.names = FALSE)
+write.table(atts,paste(group1s[i],"_vs_",group2s[i],"_attributes.txt",sep=""), sep = "\t", quote = FALSE, row.names = TRUE)
+
 }
 
 
